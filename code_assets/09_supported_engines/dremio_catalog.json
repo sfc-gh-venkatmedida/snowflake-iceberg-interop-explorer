@@ -1,0 +1,23 @@
+{
+  "_comment": "Feature 9: Dremio — connect to Snowflake Horizon Catalog via Iceberg REST",
+  "_docs": "https://docs.dremio.com/current/sonar/data-sources/object/iceberg-rest/",
+  "name": "snowflake_horizon",
+  "type": "ICEBERG_REST",
+  "config": {
+    "uri":       "https://scb47336.snowflakecomputing.com/polaris/api/catalog",
+    "warehouse": "horizon_demo_db",
+    "credentialType": "BEARER_TOKEN",
+    "token":     "${SNOWFLAKE_TOKEN}",
+    "headers": {
+      "X-Iceberg-Access-Delegation": "vended-credentials"
+    },
+    "properties": {
+      "s3.region":                "us-east-2",
+      "s3.path-style-access":    "false"
+    }
+  },
+  "_usage": [
+    "SELECT * FROM snowflake_horizon.public.transactions",
+    "SELECT currency, COUNT(*), SUM(amount) FROM snowflake_horizon.public.transactions GROUP BY 1"
+  ]
+}

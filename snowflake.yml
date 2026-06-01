@@ -1,0 +1,14 @@
+definition_version: 2
+entities:
+  iceberg_interop_explorer:
+    type: streamlit
+    identifier:
+      name: ICEBERG_INTEROP_EXPLORER
+      database: AFENG_DB
+      schema: ICEBERG_DEMOS
+    query_warehouse: STREAMLIT_APP_WH
+    main_file: streamlit_app.py
+    artifacts:
+      - streamlit_app.py
+      - pyproject.toml
+      - code_assets/

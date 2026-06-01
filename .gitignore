@@ -1,0 +1,15 @@
+output/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.snowflake/
+*.p8
+rsa_key.*
+*.pem
+.DS_Store
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
