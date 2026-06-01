@@ -582,6 +582,207 @@ File size: target 128-512 MB per Parquet file (use OPTIMIZE after small-file wri
             "After Spark writes: run OPTIMIZE to merge small files before external reads",
         ],
     },
+    {
+        "id":     "19_secure_data_sharing",
+        "title":  "19. Secure Data Sharing for Iceberg",
+        "status": "GA",
+        "icon":   "🤝",
+        "summary": (
+            "Share Snowflake-managed Iceberg tables across accounts. "
+            "Multi-tenant row isolation uses SYSTEM$CURRENT_ACCOUNT() in row access policies — "
+            "each consumer account sees only their own rows, even via Horizon REST."
+        ),
+        "arch": """
+Provider account                       Consumer account(s)
+  ICEBERG TABLE transactions      →    SHARED database (live, read-only)
+  + ROW ACCESS POLICY                  Snowflake SQL  ← same governance
+    (tenant_col = SYSTEM$CURRENT_ACCOUNT())
+                                       Horizon REST   ← policy still enforces
+                                       External engine (Spark/DuckDB)
+""",
+        "files": {
+            "SQL — Cross-account share + multi-tenant RAP": ("19_secure_data_sharing/01_iceberg_data_sharing.sql", "sql"),
+        },
+        "key_facts": [
+            "CREATE SHARE + GRANT SELECT ON ICEBERG TABLE — same DDL as regular sharing",
+            "SYSTEM$CURRENT_ACCOUNT() in RAP = tenant isolation per account",
+            "Consumer queries via Snowflake SQL OR Horizon REST — policies always enforce",
+            "Reader accounts for external parties with no Snowflake subscription",
+        ],
+    },
+    {
+        "id":     "20_delta_sharing",
+        "title":  "20. Delta Sharing Protocol",
+        "status": "GA",
+        "icon":   "📡",
+        "summary": (
+            "Share Snowflake-managed Iceberg data with non-Snowflake consumers using the open "
+            "Delta Sharing protocol. Consumers use Python, Spark, or Power BI — "
+            "no Snowflake account, no credential setup."
+        ),
+        "arch": """
+Snowflake (provider)
+  CREATE SHARE delta_iceberg_share
+  CREATE RECIPIENT partner_team  →  profile.share file (download link)
+                                     │
+Consumer (no Snowflake account)      ▼
+  import delta_sharing
+  df = delta_sharing.load_as_pandas("profile.share#share.schema.table")
+""",
+        "files": {
+            "SQL — Delta Share setup": ("20_delta_sharing/01_delta_sharing_iceberg.sql", "sql"),
+            "Python — Consumer client": ("20_delta_sharing/02_delta_sharing_client.py", "python"),
+        },
+        "key_facts": [
+            "CREATE RECIPIENT generates a one-time download link for the profile.share file",
+            "Consumer needs only: pip install delta-sharing — no Snowflake SDK",
+            "Supports pandas, Spark, Arrow, and Power BI consumers out of the box",
+            "Separate from Iceberg REST — works with any open data consumer",
+        ],
+    },
+    {
+        "id":     "21_snowpark_on_iceberg",
+        "title":  "21. Snowpark on Iceberg",
+        "status": "GA",
+        "icon":   "🐍",
+        "summary": (
+            "Use the native Snowflake Python DataFrame API (Snowpark) to read, transform, "
+            "and write Iceberg tables. No external engine, no REST token — "
+            "the simplest Python path for data engineers already in Snowflake."
+        ),
+        "arch": """
+from snowflake.snowpark.context import get_active_session
+session = get_active_session()
+
+df = session.table("horizon_demo_db.public.transactions")  # reads Iceberg
+agg = df.group_by("CURRENCY").agg(F.sum("AMOUNT"))
+agg.write.mode("append").save_as_table("revenue_by_currency")  # writes Iceberg
+""",
+        "files": {
+            "Python — Snowpark read/write/ML": ("21_snowpark_on_iceberg/01_snowpark_iceberg.py", "python"),
+        },
+        "key_facts": [
+            "session.table('iceberg_tbl') reads Iceberg transparently — no special config",
+            "write.save_as_table() appends to Iceberg — produces open Parquet + metadata",
+            "Snowpark ML feature engineering works directly on Iceberg DataFrames",
+            "Pairs with Horizon REST — Snowpark writes open data; external engines read it",
+        ],
+    },
+    {
+        "id":     "22_object_tags_classification",
+        "title":  "22. Object Tags + Data Classification",
+        "status": "GA",
+        "icon":   "🏷️",
+        "summary": (
+            "Apply governance tags and auto-classify PII columns on Iceberg tables. "
+            "Tag-based masking policies enforce automatically on any tagged column — "
+            "in Snowflake SQL and through Horizon REST from external engines."
+        ),
+        "arch": """
+CREATE TAG data_sensitivity ALLOWED_VALUES 'PUBLIC','CONFIDENTIAL','RESTRICTED'
+ALTER TABLE ... MODIFY COLUMN customer_id SET TAG data_sensitivity = 'RESTRICTED'
+CREATE MASKING POLICY mask_restricted ... → applies to ALL RESTRICTED-tagged columns
+  ↓
+External engine query via Horizon → masked automatically
+SYSTEM$CLASSIFY() → auto-detects PII columns and applies tags
+""",
+        "files": {
+            "SQL — Tags, classification, tag-based masking": ("22_object_tags_classification/01_tags_and_classification.sql", "sql"),
+        },
+        "key_facts": [
+            "SYSTEM$CLASSIFY() auto-detects PII (name, email, SSN) and tags columns",
+            "Tag-based masking: one policy applies to all RESTRICTED-tagged columns across tables",
+            "Tags are inherited by external engines — governance follows data",
+            "Access history shows tag access for compliance auditing",
+        ],
+    },
+    {
+        "id":     "23_unity_catalog_horizon",
+        "title":  "23. Unity Catalog ↔ Horizon Catalog",
+        "status": "GA",
+        "icon":   "🔄",
+        "summary": (
+            "Bidirectional integration: Databricks Spark reads Snowflake-managed Iceberg "
+            "through Horizon, AND Snowflake reads Databricks Delta tables exposed via "
+            "Unity Catalog's Iceberg REST endpoint."
+        ),
+        "arch": """
+Direction A — Databricks reads Snowflake:
+  Databricks Spark → Horizon REST endpoint → Snowflake Iceberg tables
+  (spark.sql.catalog.snowflake.uri = HORIZON_URI)
+
+Direction B — Snowflake reads Databricks:
+  Unity Catalog Iceberg REST endpoint
+    → CREATE CATALOG INTEGRATION unity_catalog_int
+    → CREATE DATABASE uc_db LINKED_CATALOG = (...)
+    → SELECT * FROM uc_db.main.my_delta_table
+""",
+        "files": {
+            "Python — Databricks Spark reading Snowflake": ("23_unity_catalog_horizon/01_databricks_spark_horizon.py", "python"),
+            "SQL — Snowflake reading Unity Catalog": ("23_unity_catalog_horizon/02_unity_catalog_integration.sql", "sql"),
+        },
+        "key_facts": [
+            "Databricks uses same Spark Iceberg REST config — no special UC connector needed",
+            "Snowflake CATALOG_SOURCE = ICEBERG_REST works for Unity Catalog endpoint",
+            "Can JOIN Snowflake Iceberg + Databricks Delta in a single SQL query",
+            "Key for 'we have both Databricks and Snowflake' customers",
+        ],
+    },
+    {
+        "id":     "24_privatelink_catalog",
+        "title":  "24. PrivateLink for Catalog Integrations",
+        "status": "GA",
+        "icon":   "🔒",
+        "summary": (
+            "All catalog traffic — Snowflake → Glue, Snowflake ↔ Polaris, "
+            "external engines → Horizon — can be routed over AWS/Azure PrivateLink. "
+            "No public internet exposure for regulated industries."
+        ),
+        "arch": """
+External Engine → AWS PrivateLink VPC Endpoint → Snowflake Horizon
+Snowflake → AWS PrivateLink VPC Endpoint → AWS Glue Iceberg REST
+Snowflake → Azure Private Link → Databricks Unity Catalog
+
+Network Policy: restrict Horizon to specific CIDR ranges
+""",
+        "files": {
+            "SQL — PrivateLink catalog integration + network policy": ("24_privatelink_catalog/01_privatelink_setup.sql", "sql"),
+        },
+        "key_facts": [
+            "CATALOG_URI uses private DNS name (VPC endpoint) instead of public URL",
+            "Network Rules + External Access Integrations restrict outbound catalog traffic",
+            "Horizon PrivateLink: account identifier uses .privatelink.snowflakecomputing.com",
+            "Required for HIPAA, FedRAMP, PCI-DSS customers",
+        ],
+    },
+    {
+        "id":     "25_iceberg_v3_features",
+        "title":  "25. Iceberg v3 Features",
+        "status": "GA",
+        "icon":   "🆕",
+        "summary": (
+            "Apache Iceberg v3 introduces nanosecond timestamps, semi-structured VARIANT/JSON columns, "
+            "default column values, improved delete vectors, and row lineage. "
+            "Snowflake supports Iceberg v3 tables natively."
+        ),
+        "arch": """
+Iceberg v2              →    Iceberg v3
+TIMESTAMP_NTZ(6)             TIMESTAMP_NTZ(9)  (nanosecond precision)
+No JSON columns              OBJECT, ARRAY, VARIANT columns
+No default values            DEFAULT <expr> on column definition
+Equality deletes             Position delete vectors (more efficient)
+No row lineage               METADATA$FILE_ROW_NUMBER, METADATA$PARTITION_ID
+""",
+        "files": {
+            "SQL — v3 table with VARIANT, nanoseconds, defaults": ("25_iceberg_v3_features/01_iceberg_v3.sql", "sql"),
+        },
+        "key_facts": [
+            "TIMESTAMP_NTZ(9) for nanosecond precision — critical for event/telemetry tables",
+            "OBJECT_CONSTRUCT() / ARRAY_CONSTRUCT() stored natively in Iceberg Parquet",
+            "DEFAULT values on columns — no need to populate on insert",
+            "Engines supporting v3: Spark ≥3.4+Iceberg 1.5, PyIceberg ≥0.7, Trino ≥438",
+        ],
+    },
 ]
 
 support_rows = [
@@ -603,6 +804,13 @@ support_rows = [
     {"Capability": "Snowpipe Streaming → Iceberg",        "Status": "GA",      "Default path": "Kafka Connector SNOWPIPE_STREAMING mode",  "Best for": "Real-time open Iceberg pipelines"},
     {"Capability": "Dynamic Tables as Iceberg",           "Status": "GA",      "Default path": "CREATE DYNAMIC ICEBERG TABLE",             "Best for": "Incremental pipelines with open output"},
     {"Capability": "Partitioning + Performance Tuning",   "Status": "GA",      "Default path": "PARTITION BY transforms + OPTIMIZE",       "Best for": "Query performance, partition pruning"},
+    {"Capability": "Secure Data Sharing for Iceberg",      "Status": "GA",      "Default path": "CREATE SHARE + multi-tenant RAP",          "Best for": "Cross-account & multi-tenant Iceberg"},
+    {"Capability": "Delta Sharing Protocol",               "Status": "GA",      "Default path": "CREATE SHARE + CREATE RECIPIENT",          "Best for": "Non-Snowflake consumers (Python/Spark)"},
+    {"Capability": "Snowpark on Iceberg",                  "Status": "GA",      "Default path": "session.table() + write.save_as_table()",  "Best for": "Python-native Iceberg access in Snowflake"},
+    {"Capability": "Object Tags + Data Classification",    "Status": "GA",      "Default path": "CREATE TAG + SYSTEM$CLASSIFY()",           "Best for": "PII governance on Iceberg tables"},
+    {"Capability": "Unity Catalog ↔ Horizon",             "Status": "GA",      "Default path": "Iceberg REST both directions",             "Best for": "Databricks + Snowflake customers"},
+    {"Capability": "PrivateLink for Catalog Integrations", "Status": "GA",      "Default path": "Private DNS + Network Policy",             "Best for": "HIPAA/PCI/FedRAMP environments"},
+    {"Capability": "Iceberg v3 Features",                  "Status": "GA",      "Default path": "VARIANT, TIMESTAMP_NTZ(9), DEFAULT",       "Best for": "Event/telemetry tables, JSON payloads"},
 ]
 
 engine_rows = [
