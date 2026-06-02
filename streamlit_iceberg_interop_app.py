@@ -611,41 +611,7 @@ Provider account                       Consumer account(s)
         ],
     },
     {
-        "id":     "20_delta_sharing",
-        "title":  "20. Delta Sharing — Snowflake as Consumer",
-        "status": "Preview",
-        "icon":   "📡",
-        "summary": (
-            "Snowflake can CONSUME Delta Shares from external providers (Databricks, etc.) "
-            "via a Catalog-Linked Database — query shared data directly in Snowflake SQL, "
-            "join with native Iceberg tables, no ETL needed. GA targeted mid-2026."
-        ),
-        "arch": """
-Delta Sharing provider (e.g. Databricks)
-  Supplies: endpoint URL + bearer token (profile.share)
-        │
-        ▼  CATALOG_SOURCE = DELTA_SHARING
-CREATE CATALOG INTEGRATION delta_share_int
-        │
-        ▼
-CREATE DATABASE delta_shared_db LINKED_CATALOG = (...)
-  └── auto-discovers all shared schemas + tables
-        │
-        ▼
-SELECT * FROM delta_shared_db.public.table  ← native Snowflake SQL
-JOIN horizon_demo_db.public.transactions     ← with Snowflake Iceberg tables
-""",
-        "files": {
-            "SQL — Consume Delta Share via CLD": ("20_delta_sharing/01_delta_sharing_iceberg.sql", "sql"),
-            "Python — Query shared data": ("20_delta_sharing/02_delta_sharing_client.py", "python"),
-        },
-        "key_facts": [
-            "⚠️ Snowflake is a CONSUMER of Delta Shares — not a provider",
-            "Consumed via Catalog-Linked Database (same pattern as Glue, Polaris)",
-            "Query Delta Shared tables in Snowflake SQL alongside native Iceberg tables",
-            "GA targeted ~2026-06-01 per internal PLT",
-        ],
-    },
+
     {
         "id":     "21_snowpark_on_iceberg",
         "title":  "21. Snowpark on Iceberg",
@@ -811,7 +777,7 @@ support_rows = [
     {"Capability": "Dynamic Tables as Iceberg",           "Status": "GA",      "Default path": "CREATE DYNAMIC ICEBERG TABLE",             "Best for": "Incremental pipelines with open output"},
     {"Capability": "Partitioning + Performance Tuning",   "Status": "GA",      "Default path": "PARTITION BY transforms + OPTIMIZE",       "Best for": "Query performance, partition pruning"},
     {"Capability": "Secure Data Sharing for Iceberg",      "Status": "GA",      "Default path": "CREATE SHARE + multi-tenant RAP",          "Best for": "Cross-account & multi-tenant Iceberg"},
-    {"Capability": "Delta Sharing (Consumer)",              "Status": "Preview", "Default path": "CATALOG_SOURCE=DELTA_SHARING + CLD",        "Best for": "Query Databricks Delta Shares in Snowflake SQL"},
+
     {"Capability": "Snowpark on Iceberg",                  "Status": "GA",      "Default path": "session.table() + write.save_as_table()",  "Best for": "Python-native Iceberg access in Snowflake"},
     {"Capability": "Object Tags + Data Classification",    "Status": "GA",      "Default path": "CREATE TAG + SYSTEM$CLASSIFY()",           "Best for": "PII governance on Iceberg tables"},
     {"Capability": "Unity Catalog ↔ Horizon",             "Status": "GA",      "Default path": "Iceberg REST both directions",             "Best for": "Databricks + Snowflake customers"},
