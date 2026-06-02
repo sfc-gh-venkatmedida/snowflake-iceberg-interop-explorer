@@ -1,0 +1,12 @@
+definition_version: 2
+entities:
+  iceberg_interop_notebook:
+    type: notebook
+    identifier:
+      name: ICEBERG_INTEROP_ALL_FEATURES
+      database: ICEBERG_DEMOS
+      schema: NOTEBOOKS
+    notebook_file: snowflake_iceberg_all_features.ipynb
+    query_warehouse: OPENFLOW_INGEST_WAREHOUSE
+    artifacts:
+      - snowflake_iceberg_all_features.ipynb

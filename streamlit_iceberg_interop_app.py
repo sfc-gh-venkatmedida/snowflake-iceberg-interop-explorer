@@ -612,32 +612,38 @@ Provider account                       Consumer account(s)
     },
     {
         "id":     "20_delta_sharing",
-        "title":  "20. Delta Sharing Protocol",
-        "status": "GA",
+        "title":  "20. Delta Sharing — Snowflake as Consumer",
+        "status": "Preview",
         "icon":   "📡",
         "summary": (
-            "Share Snowflake-managed Iceberg data with non-Snowflake consumers using the open "
-            "Delta Sharing protocol. Consumers use Python, Spark, or Power BI — "
-            "no Snowflake account, no credential setup."
+            "Snowflake can CONSUME Delta Shares from external providers (Databricks, etc.) "
+            "via a Catalog-Linked Database — query shared data directly in Snowflake SQL, "
+            "join with native Iceberg tables, no ETL needed. GA targeted mid-2026."
         ),
         "arch": """
-Snowflake (provider)
-  CREATE SHARE delta_iceberg_share
-  CREATE RECIPIENT partner_team  →  profile.share file (download link)
-                                     │
-Consumer (no Snowflake account)      ▼
-  import delta_sharing
-  df = delta_sharing.load_as_pandas("profile.share#share.schema.table")
+Delta Sharing provider (e.g. Databricks)
+  Supplies: endpoint URL + bearer token (profile.share)
+        │
+        ▼  CATALOG_SOURCE = DELTA_SHARING
+CREATE CATALOG INTEGRATION delta_share_int
+        │
+        ▼
+CREATE DATABASE delta_shared_db LINKED_CATALOG = (...)
+  └── auto-discovers all shared schemas + tables
+        │
+        ▼
+SELECT * FROM delta_shared_db.public.table  ← native Snowflake SQL
+JOIN horizon_demo_db.public.transactions     ← with Snowflake Iceberg tables
 """,
         "files": {
-            "SQL — Delta Share setup": ("20_delta_sharing/01_delta_sharing_iceberg.sql", "sql"),
-            "Python — Consumer client": ("20_delta_sharing/02_delta_sharing_client.py", "python"),
+            "SQL — Consume Delta Share via CLD": ("20_delta_sharing/01_delta_sharing_iceberg.sql", "sql"),
+            "Python — Query shared data": ("20_delta_sharing/02_delta_sharing_client.py", "python"),
         },
         "key_facts": [
-            "CREATE RECIPIENT generates a one-time download link for the profile.share file",
-            "Consumer needs only: pip install delta-sharing — no Snowflake SDK",
-            "Supports pandas, Spark, Arrow, and Power BI consumers out of the box",
-            "Separate from Iceberg REST — works with any open data consumer",
+            "⚠️ Snowflake is a CONSUMER of Delta Shares — not a provider",
+            "Consumed via Catalog-Linked Database (same pattern as Glue, Polaris)",
+            "Query Delta Shared tables in Snowflake SQL alongside native Iceberg tables",
+            "GA targeted ~2026-06-01 per internal PLT",
         ],
     },
     {
@@ -805,7 +811,7 @@ support_rows = [
     {"Capability": "Dynamic Tables as Iceberg",           "Status": "GA",      "Default path": "CREATE DYNAMIC ICEBERG TABLE",             "Best for": "Incremental pipelines with open output"},
     {"Capability": "Partitioning + Performance Tuning",   "Status": "GA",      "Default path": "PARTITION BY transforms + OPTIMIZE",       "Best for": "Query performance, partition pruning"},
     {"Capability": "Secure Data Sharing for Iceberg",      "Status": "GA",      "Default path": "CREATE SHARE + multi-tenant RAP",          "Best for": "Cross-account & multi-tenant Iceberg"},
-    {"Capability": "Delta Sharing Protocol",               "Status": "GA",      "Default path": "CREATE SHARE + CREATE RECIPIENT",          "Best for": "Non-Snowflake consumers (Python/Spark)"},
+    {"Capability": "Delta Sharing (Consumer)",              "Status": "Preview", "Default path": "CATALOG_SOURCE=DELTA_SHARING + CLD",        "Best for": "Query Databricks Delta Shares in Snowflake SQL"},
     {"Capability": "Snowpark on Iceberg",                  "Status": "GA",      "Default path": "session.table() + write.save_as_table()",  "Best for": "Python-native Iceberg access in Snowflake"},
     {"Capability": "Object Tags + Data Classification",    "Status": "GA",      "Default path": "CREATE TAG + SYSTEM$CLASSIFY()",           "Best for": "PII governance on Iceberg tables"},
     {"Capability": "Unity Catalog ↔ Horizon",             "Status": "GA",      "Default path": "Iceberg REST both directions",             "Best for": "Databricks + Snowflake customers"},

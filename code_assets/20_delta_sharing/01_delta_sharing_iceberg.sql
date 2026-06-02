@@ -1,61 +1,62 @@
 -- =============================================================================
--- Feature 20: Delta Sharing Protocol on Iceberg Tables
--- Snowflake supports Delta Sharing for Iceberg tables — share data with
--- non-Snowflake consumers using an open protocol, no account access needed.
--- Consumers use the Delta Sharing client (Python, Spark, pandas, Power BI).
+-- Feature 20: Delta Sharing — Snowflake as CONSUMER
+-- Snowflake can CONSUME Delta Shares from external providers
+-- (Databricks, other Delta Sharing-compatible systems).
+-- This is done via a Catalog-Linked Database (CLD).
+-- GA target: 2026-06-01
+--
+-- ⚠️  POSITIONING NOTE:
+-- Snowflake supports Delta Sharing as a CONSUMER, not as a provider.
+-- The supported model is: ingest/query incoming Delta Shares via CLD.
+-- Do NOT position Snowflake as serving data out via Delta Sharing protocol.
 -- =============================================================================
 
--- Step 1: Enable Delta Sharing on the account
-ALTER ACCOUNT SET DELTA_SHARING_ORGANIZATION_NAME = 'my-snowflake-org';
+-- Step 1: Create a catalog integration pointing to the Delta Sharing provider
+--   The provider supplies a Delta Sharing endpoint + bearer token (profile.share)
+CREATE OR REPLACE CATALOG INTEGRATION delta_share_int
+    CATALOG_SOURCE    = DELTA_SHARING
+    TABLE_FORMAT      = DELTA
+    DELTA_SHARING_CONFIG = (
+        DELTA_SHARING_ENDPOINT = 'https://<databricks-workspace>.azuredatabricks.net/api/2.0/delta-sharing'
+        DELTA_SHARING_TOKEN    = '<bearer_token_from_profile_share>'
+        DELTA_SHARING_SHARE    = '<share_name>'
+    )
+    ENABLED = TRUE;
 
--- Step 2: Set data retention for sharing
-ALTER ACCOUNT SET DELTA_SHARING_REPLICATION_ENABLED = TRUE;
+-- Step 2: Verify connectivity to the Delta Share provider
+SELECT SYSTEM$VERIFY_CATALOG_INTEGRATION('delta_share_int');
 
--- Step 3: Create a Delta Share
-CREATE SHARE delta_iceberg_share
-    COMMENT = 'Open Delta Sharing endpoint for Iceberg transaction data';
+-- Step 3: Create a catalog-linked database
+--   Snowflake auto-discovers all tables in the Delta Share as schemas/tables
+CREATE DATABASE IF NOT EXISTS delta_shared_db
+    LINKED_CATALOG = (
+        CATALOG_INTEGRATION = 'delta_share_int'
+    );
 
--- Step 4: Add Iceberg table to the share
-GRANT USAGE ON DATABASE horizon_demo_db        TO SHARE delta_iceberg_share;
-GRANT USAGE ON SCHEMA   horizon_demo_db.public  TO SHARE delta_iceberg_share;
-GRANT SELECT ON TABLE   horizon_demo_db.public.transactions TO SHARE delta_iceberg_share;
+-- Step 4: List auto-discovered schemas and tables
+SHOW SCHEMAS IN delta_shared_db;
+SHOW ICEBERG TABLES IN delta_shared_db;
 
--- Step 5: Create a recipient (a specific external consumer)
-CREATE RECIPIENT partner_data_team
-    COMMENT = 'Partner analytics team — no Snowflake account needed';
+-- Step 5: Query the Delta Shared data directly from Snowflake SQL
+SELECT * FROM delta_shared_db.<schema>.<table> LIMIT 10;
 
--- Retrieve the activation link / profile JSON for the recipient
-DESC RECIPIENT partner_data_team;
--- Gives a profile.share URL that the consumer downloads and uses
+-- Step 6: Join Delta Shared data with Snowflake-native Iceberg tables
+SELECT
+    s.transaction_id,
+    s.amount,
+    d.customer_segment      -- from Databricks Delta Share
+FROM horizon_demo_db.public.transactions s
+JOIN delta_shared_db.public.customer_profiles d
+    ON s.customer_id = d.customer_id
+WHERE s.status = 'COMPLETED';
 
--- Step 6: Grant the share to the recipient
-ALTER SHARE delta_iceberg_share ADD RECIPIENTS partner_data_team;
-
--- Step 7: Monitor what consumers accessed
-SELECT *
-FROM snowflake.account_usage.delta_sharing_usage_history
-WHERE share_name = 'DELTA_ICEBERG_SHARE'
-  AND request_time >= DATEADD(DAY, -7, CURRENT_TIMESTAMP())
-ORDER BY request_time DESC;
-
--- =============================================================
--- Consumer side (Python — no Snowflake account needed)
--- =============================================================
--- pip install delta-sharing pandas pyarrow
---
--- import delta_sharing
--- client = delta_sharing.SharingClient("profile.share")
--- tables = client.list_all_tables()
--- df = delta_sharing.load_as_pandas("profile.share#delta_iceberg_share.public.transactions")
--- df.head()
+-- Step 7: Refresh the catalog-linked database to pick up new tables/schemas
+ALTER DATABASE delta_shared_db REFRESH;
 
 -- =============================================================
--- Consumer side (Spark — no Snowflake account needed)
+-- Customer-safe positioning:
+-- "Snowflake can consume Delta Shares from Databricks or any
+--  Delta Sharing-compatible provider directly in Snowflake SQL
+--  via a catalog-linked database — no ETL, no data copy,
+--  governed by Snowflake RBAC."
 -- =============================================================
--- spark = SparkSession.builder \
---     .config("spark.jars.packages", "io.delta:delta-sharing-spark_2.12:3.0.0") \
---     .getOrCreate()
--- df = spark.read.format("deltaSharing") \
---     .option("responseFormat", "delta") \
---     .load("profile.share#delta_iceberg_share.public.transactions")
--- df.show()
