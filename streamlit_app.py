@@ -611,8 +611,6 @@ Provider account                       Consumer account(s)
         ],
     },
     {
-
-    {
         "id":     "21_snowpark_on_iceberg",
         "title":  "21. Snowpark on Iceberg",
         "status": "GA",
