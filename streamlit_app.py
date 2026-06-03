@@ -54,36 +54,33 @@ External Engine (Spark / DuckDB / PyIceberg / Trino / ...)
     },
     {
         "id":     "02_polaris_integration",
-        "title":  "2. Apache Polaris Integration",
+        "title":  "2. Horizon Catalog (Polaris-based Implementation)",
         "status": "GA",
         "icon":   "🐻‍❄️",
         "summary": (
-            "Apache Polaris (the open-source catalog that Snowflake Open Catalog is built on) is "
-            "integrated into Horizon Catalog. Snowflake can both serve as a Polaris-compatible REST "
-            "endpoint AND read tables managed by an external Polaris instance."
+            "Apache Polaris is integrated into Snowflake Horizon Catalog — Horizon IS the Polaris-based "
+            "implementation. External engines connect TO Horizon using the open Iceberg REST protocol. "
+            "Snowflake can also read tables managed by an external Polaris/Open Catalog instance."
         ),
         "arch": """
-Direction A — Snowflake as Horizon (Polaris protocol):
-  External Spark / Flink  →  Horizon REST endpoint  →  Snowflake Iceberg tables
+Horizon Catalog = Polaris-based Iceberg REST endpoint
 
-Direction B — Snowflake reads an external Polaris:
-  External Apache Polaris (Docker / any host)
-        │  Iceberg REST
-        ▼
-  Snowflake CATALOG INTEGRATION (CATALOG_SOURCE = POLARIS)
-        │
-        ▼
-  Catalog-Linked Database  →  Snowflake SQL queries
+External engines (Spark/Flink/Trino/DuckDB) → Horizon REST → Snowflake Iceberg tables
+
+Snowflake also reads external Polaris/Open Catalog:
+  CATALOG_SOURCE = POLARIS  →  Catalog-Linked DB  →  SQL queries
+
+Key framing: Polaris is the protocol/implementation, Horizon is the customer-facing product.
 """,
         "files": {
             "SQL — Catalog Integration": ("02_polaris_integration/01_polaris_catalog_integration.sql", "sql"),
             "Python — PySpark config": ("02_polaris_integration/02_spark_polaris_config.py", "python"),
         },
         "key_facts": [
-            "CATALOG_SOURCE = POLARIS in CREATE CATALOG INTEGRATION",
-            "Catalog-linked database auto-discovers Polaris namespaces as schemas",
-            "Same IAM external volume for credential vending",
-            "Both directions (read Polaris OR serve as Polaris endpoint) supported",
+            "Horizon Catalog IS the Polaris-based open Iceberg REST endpoint — say 'Horizon', not 'Polaris' to customers",
+            "Polaris is the open-source implementation; Horizon is the Snowflake product",
+            "External engines use standard Iceberg REST — no Polaris-specific client needed",
+            "Snowflake can also read from external Polaris/Open Catalog instances via CATALOG_SOURCE = POLARIS",
         ],
     },
     {
@@ -340,35 +337,38 @@ Both paths → same Horizon REST endpoint for external engines
     },
     {
         "id":     "11_glue_catalog_linked_db",
-        "title":  "11. AWS Glue + Catalog-Linked Databases",
+        "title":  "11. Catalog Federation / Catalog-Linked Databases",
         "status": "GA",
         "icon":   "🔌",
         "summary": (
-            "Snowflake connects to AWS Glue as an Iceberg REST Catalog. "
-            "A catalog-linked database auto-discovers all Glue databases as Snowflake schemas — "
-            "no manual table registration. Full DML from Snowflake SQL."
+            "Snowflake connects to external Iceberg REST catalogs (AWS Glue, Unity Catalog, "
+            "Apache Polaris, Microsoft OneLake) via catalog-linked databases that "
+            "auto-discover namespaces and tables. No manual table registration. Full DML from Snowflake SQL."
         ),
         "arch": """
-AWS Glue Iceberg REST Catalog (us-east-2)
-    │  CATALOG_SOURCE = ICEBERG_REST, CATALOG_API_TYPE = AWS_GLUE
+External Catalog (Glue / Unity Catalog / Polaris / OneLake)
+    │  Iceberg REST
     ▼
-CREATE CATALOG INTEGRATION glue_iceberg_catalog_int
+CREATE CATALOG INTEGRATION <name>  (CATALOG_SOURCE = ICEBERG_REST or POLARIS)
     │
     ▼
-CREATE DATABASE iceberg_glue_db LINKED_CATALOG = (...)
-    │  auto-discovers Glue DBs as schemas
+CREATE DATABASE <db> LINKED_CATALOG = (...) EXTERNAL_VOLUME = ...
+    │  auto-discovers: namespaces → schemas, tables → queryable tables
     ▼
-SELECT * FROM iceberg_glue_db."iceberg_insurance_db"."insurance_customers"
+SELECT / INSERT / UPDATE / DELETE from external Iceberg tables in Snowflake SQL
+ALTER DATABASE <db> REFRESH  ← sync new tables from external catalog
 """,
         "files": {
-            "SQL — Glue integration + CLD": ("11_glue_catalog_linked_db/01_glue_catalog_integration.sql", "sql"),
-            "Python — PyIceberg via Glue": ("11_glue_catalog_linked_db/02_pyiceberg_glue_connect.py", "python"),
+            "SQL — Supported external catalogs": ("27_supported_external_catalogs/01_catalog_integrations.sql", "sql"),
+            "SQL — AWS Glue example": ("11_glue_catalog_linked_db/01_glue_catalog_integration.sql", "sql"),
+            "SQL — Auto table discovery": ("29_auto_table_discovery/01_auto_discovery_cld.sql", "sql"),
+            "SQL — OneLake REST": ("28_onelake_rest_catalog/01_onelake_catalog_integration.sql", "sql"),
         },
         "key_facts": [
-            "CATALOG_API_TYPE = AWS_GLUE; CATALOG_NAME = <12-digit AWS account ID>",
-            "CATALOG_SOURCE = ICEBERG_REST (not GLUE — Glue speaks Iceberg REST)",
-            "ACCESS_DELEGATION_MODE = EXTERNAL_VOLUME_CREDENTIALS reuses IAM role",
-            "Glue is case-insensitive — use lowercase + double quotes in SQL",
+            "Supported external catalogs: AWS Glue, Databricks Unity Catalog, Apache Polaris/Open Catalog, Microsoft OneLake",
+            "Catalog-linked DBs auto-discover ALL namespaces/tables — no manual CREATE TABLE needed",
+            "ALTER DATABASE ... REFRESH syncs new tables added to the external catalog",
+            "⚠\ufe0f Private connectivity caveat: catalog-vended credentials NOT supported over PrivateLink (use external volume for data access)",
         ],
     },
     {
@@ -406,34 +406,37 @@ External engines:
     },
     {
         "id":     "13_table_maintenance",
-        "title":  "13. Table Maintenance (OPTIMIZE / REORG)",
+        "title":  "13. Automated Table Maintenance",
         "status": "GA",
         "icon":   "🔧",
         "summary": (
-            "External engines (Spark, Flink) create many small Parquet files. "
-            "Snowflake's OPTIMIZE compacts them, REORG rewrites with sort order, "
-            "and EXPIRE SNAPSHOTS clears old metadata — without downtime."
+            "For Snowflake-managed Iceberg tables, Snowflake handles maintenance automatically "
+            "(compaction, snapshot lifecycle, manifest optimization). "
+            "Manual OPTIMIZE is only needed when external engines (Spark, Flink) write to the table "
+            "and leave many small files that Snowflake's auto-maintenance does not cover."
         ),
         "arch": """
-After Spark writes 1000 small files:
-  ALTER ICEBERG TABLE ... OPTIMIZE
-  → Snowflake merges into fewer, larger Parquet files
-  → Query scan time drops dramatically
+Snowflake-only writes:   automatic maintenance — nothing to do
+Spark/Flink writes:      Spark leaves small files → manual OPTIMIZE needed
 
-Partition-targeted compaction:
-  ALTER ICEBERG TABLE ... OPTIMIZE WHERE transaction_ts >= DATEADD(DAY,-7,CURRENT_DATE)
+Manual OPTIMIZE (only for external-engine writes):
+  ALTER ICEBERG TABLE ... OPTIMIZE WHERE ts >= DATEADD(DAY,-7,CURRENT_DATE)
 
-Scheduled maintenance:
-  ALTER ICEBERG TABLE ... SET AUTO_REFRESH = TRUE
+Automatic maintenance (Snowflake-managed tables):
+  Compaction, snapshot expiry, manifest optimization — handled by Snowflake
+
+Schedule for mixed workloads (Snowflake + Spark):
+  CREATE TASK optimize_task SCHEDULE='0 */4 * * *' AS
+    ALTER ICEBERG TABLE ... OPTIMIZE WHERE ts >= DATEADD(HOUR,-6,CURRENT_TIMESTAMP())
 """,
         "files": {
             "SQL — OPTIMIZE / REORG / EXPIRE": ("13_table_maintenance/01_optimize_reorg_expire.sql", "sql"),
         },
         "key_facts": [
-            "OPTIMIZE merges small Parquet files — critical after Spark/Flink appends",
-            "REORG rewrites files in sort order for better predicate pruning",
-            "EXPIRE SNAPSHOTS removes old snapshot metadata to reduce storage cost",
-            "Can target specific partitions with WHERE clause to minimize I/O",
+            "Snowflake auto-manages maintenance for Snowflake-only write workloads — no OPTIMIZE needed",
+            "OPTIMIZE only needed when Spark/Flink writes create small files",
+            "Schedule via Snowflake Tasks, target recent partitions with WHERE clause",
+            "EXPIRE SNAPSHOTS on a separate weekly/monthly task schedule",
         ],
     },
     {
@@ -706,12 +709,20 @@ Direction B — Snowflake reads Databricks:
         "summary": (
             "All catalog traffic — Snowflake → Glue, Snowflake ↔ Polaris, "
             "external engines → Horizon — can be routed over AWS/Azure PrivateLink. "
-            "No public internet exposure for regulated industries."
+            "No public internet exposure for regulated industries. "
+            "⚠\ufe0f Important caveat: catalog-vended credentials are NOT supported over PrivateLink."
         ),
         "arch": """
 External Engine → AWS PrivateLink VPC Endpoint → Snowflake Horizon
 Snowflake → AWS PrivateLink VPC Endpoint → AWS Glue Iceberg REST
 Snowflake → Azure Private Link → Databricks Unity Catalog
+
+⚠\ufe0f  PRIVATE CONNECTIVITY CAVEAT:
+  Catalog-VENDED CREDENTIALS are NOT supported when using PrivateLink.
+  Credential vending requires Snowflake to make outbound calls to the cloud IAM service,
+  which is blocked in PrivateLink-only setups.
+  → Solution: configure the external volume separately for data access.
+  → The catalog integration handles metadata only over the private link.
 
 Network Policy: restrict Horizon to specific CIDR ranges
 """,
@@ -721,7 +732,7 @@ Network Policy: restrict Horizon to specific CIDR ranges
         "key_facts": [
             "CATALOG_URI uses private DNS name (VPC endpoint) instead of public URL",
             "Network Rules + External Access Integrations restrict outbound catalog traffic",
-            "Horizon PrivateLink: account identifier uses .privatelink.snowflakecomputing.com",
+            "⚠\ufe0f Catalog-vended credentials NOT supported over PrivateLink — use external volume for data access",
             "Required for HIPAA, FedRAMP, PCI-DSS customers",
         ],
     },
@@ -753,12 +764,141 @@ No row lineage               METADATA$FILE_ROW_NUMBER, METADATA$PARTITION_ID
             "Engines supporting v3: Spark ≥3.4+Iceberg 1.5, PyIceberg ≥0.7, Trino ≥438",
         ],
     },
+    {
+        "id":     "26_wif_oidc_auth",
+        "title":  "26. WIF / OIDC Authentication for External Engines",
+        "status": "GA",
+        "icon":   "🔑",
+        "summary": (
+            "External engines (EMR, Databricks, Dataproc) authenticate to Horizon Catalog "
+            "using their native cloud identity (AWS IAM role, Azure Managed Identity, GCP Service Account) — "
+            "no static Snowflake tokens, no key rotation. Added with write-support GA release."
+        ),
+        "arch": """
+Static token (old):   EMR → generate JWT → exchange for Snowflake token → pass in config
+                      Token expires → restart. Key rotation: manual. Complexity: HIGH.
+
+WIF/OIDC (new):       EMR/Spark → AWS IAM role → OIDC token → Snowflake validates automatically
+                      No keys, no rotation, no token management. Complexity: LOW.
+
+Supported identity providers:
+  AWS   → IAM role via STS/OIDC
+  Azure → Managed Identity or Entra ID service principal
+  GCP   → Service Account via GCP OIDC
+""",
+        "files": {
+            "SQL — WIF/OIDC security integration setup": ("26_wif_oidc_auth/01_wif_oidc_setup.sql", "sql"),
+        },
+        "key_facts": [
+            "CREATE SECURITY INTEGRATION TYPE=EXTERNAL_OAUTH maps cloud identity to Snowflake user",
+            "Engine uses its existing IAM role — no Snowflake password or JWT needed",
+            "Works for AWS EMR, Databricks, GCP Dataproc, Azure ADF",
+            "Introduced with external-engine write support GA release",
+        ],
+    },
+    {
+        "id":     "27_supported_external_catalogs",
+        "title":  "27. Supported External Catalogs",
+        "status": "GA",
+        "icon":   "📚",
+        "summary": (
+            "External CATALOGS that Snowflake can federate to (read/write via CLD). "
+            "Separate concept from external ENGINES which connect TO Snowflake Horizon. "
+            "Supported: AWS Glue, Databricks Unity Catalog, Apache Polaris/Open Catalog, Microsoft OneLake."
+        ),
+        "arch": """
+External CATALOGS (Snowflake reads FROM these via Catalog Federation):
+  AWS Glue          → CATALOG_SOURCE=ICEBERG_REST, CATALOG_API_TYPE=AWS_GLUE
+  Unity Catalog     → CATALOG_SOURCE=ICEBERG_REST, OAuth (service principal)
+  Polaris/Open Cat  → CATALOG_SOURCE=POLARIS, OAuth
+  OneLake REST      → CATALOG_SOURCE=ICEBERG_REST, Azure OAuth
+
+External ENGINES (these read FROM Snowflake Horizon):
+  Spark / Flink / Trino / DuckDB / PyIceberg / Dremio / Doris / StarRocks
+
+These are two DIFFERENT directions — do not conflate them.
+""",
+        "files": {
+            "SQL — All catalog integrations reference": ("27_supported_external_catalogs/01_catalog_integrations.sql", "sql"),
+        },
+        "key_facts": [
+            "Engines connect TO Horizon; Catalogs are connected FROM Snowflake — opposite directions",
+            "AWS Glue: use CATALOG_API_TYPE=AWS_GLUE with SigV4 auth",
+            "Unity Catalog: OAuth service principal; storage via UC external locations (not Snowflake vending)",
+            "OneLake: Azure OAuth; separate from Fabric JDBC path (which needs a warehouse)",
+        ],
+    },
+    {
+        "id":     "28_onelake_rest_catalog",
+        "title":  "28. Microsoft OneLake REST Catalog",
+        "status": "GA",
+        "icon":   "🏢",
+        "summary": (
+            "Snowflake connects to Microsoft OneLake as an Iceberg REST catalog source via catalog-linked database. "
+            "Distinct from the Fabric JDBC path: this uses Iceberg REST, no warehouse needed. "
+            "Read OneLake-managed Iceberg tables in Snowflake SQL."
+        ),
+        "arch": """
+Path A (THIS feature): Snowflake reads OneLake via Iceberg REST
+  Direction: Snowflake → OneLake  |  Protocol: Iceberg REST  |  Warehouse: NOT needed
+
+Path B (Fabric JDBC): Fabric reads Snowflake via SQL connector
+  Direction: Fabric → Snowflake   |  Protocol: JDBC/ODBC     |  Warehouse: REQUIRED
+  Docs: docs.snowflake.com/.../tables-iceberg-query-using-microsoft-fabric
+
+⚠️ Private connectivity caveat:
+   Catalog-vended credentials NOT supported over PrivateLink.
+   Configure external volume separately for data access.
+""",
+        "files": {
+            "SQL — OneLake catalog integration + CLD": ("28_onelake_rest_catalog/01_onelake_catalog_integration.sql", "sql"),
+        },
+        "key_facts": [
+            "OneLake speaks Iceberg REST — connect via CATALOG_SOURCE=ICEBERG_REST",
+            "No warehouse needed for metadata/reads — Parquet files accessed directly",
+            "Auth: Azure OAuth service principal (Azure app registration)",
+            "⚠️ Catalog-vended credentials NOT supported over PrivateLink — use external volume for data",
+        ],
+    },
+    {
+        "id":     "29_auto_table_discovery",
+        "title":  "29. Automatic Table Discovery + Remote Catalog Sync",
+        "status": "GA",
+        "icon":   "🔍",
+        "summary": (
+            "Catalog-linked databases auto-discover ALL namespaces and tables from external catalogs. "
+            "No manual table registration. New tables added to the external catalog "
+            "appear in Snowflake after ALTER DATABASE ... REFRESH."
+        ),
+        "arch": """
+External catalog adds a new table:
+  Glue: CREATE TABLE my_new_table  →  not yet in Snowflake
+
+ALTER DATABASE iceberg_glue_db REFRESH
+  →  Snowflake auto-discovers my_new_table
+  →  Immediately queryable in Snowflake SQL: SELECT * FROM iceberg_glue_db.public.my_new_table
+
+Behavior:
+  New table     → appears after refresh
+  Dropped table → disappears after refresh
+  Schema change → schema evolution propagated at next refresh
+""",
+        "files": {
+            "SQL — Auto-discovery + CLD sync": ("29_auto_table_discovery/01_auto_discovery_cld.sql", "sql"),
+        },
+        "key_facts": [
+            "ALTER DATABASE ... REFRESH syncs new tables/namespaces from the external catalog",
+            "Schema evolution in external catalog propagates to Snowflake automatically at refresh",
+            "Scheduled refresh possible via Snowflake Tasks",
+            "⚠️ CLDs do not support Snowflake Data Sharing listings — those are separate paths",
+        ],
+    },
 ]
 
 support_rows = [
-    {"Capability": "Open Iceberg REST Access",           "Status": "GA",      "Default path": "Horizon REST endpoint",                   "Best for": "Any engine supporting Iceberg REST"},
-    {"Capability": "Apache Polaris Integration",          "Status": "GA",      "Default path": "CATALOG_SOURCE=POLARIS or Horizon itself", "Best for": "Open catalog interop story"},
-    {"Capability": "Single Endpoint",                     "Status": "GA",      "Default path": "One URI per account",                     "Best for": "Simplifying engine config"},
+    {"Capability": "Open Iceberg REST Access",             "Status": "GA",      "Default path": "Horizon REST endpoint",                     "Best for": "Any engine supporting Iceberg REST"},
+    {"Capability": "Horizon Catalog (Polaris-based)",       "Status": "GA",      "Default path": "Horizon IS the Polaris implementation",      "Best for": "Open interop story — say 'Horizon' not 'Polaris'"},
+    {"Capability": "Single Endpoint",                       "Status": "GA",      "Default path": "One URI per account",                        "Best for": "Simplifying engine config"},
     {"Capability": "External Engine Read + Write",        "Status": "GA",      "Default path": "Horizon REST + vended credentials",        "Best for": "Open data engineering pipelines"},
     {"Capability": "Existing Security Model",             "Status": "GA",      "Default path": "Snowflake users + roles + key-pair JWT",   "Best for": "Unified governance"},
     {"Capability": "Credential Vending",                  "Status": "GA",      "Default path": "X-Iceberg-Access-Delegation header",       "Best for": "Secure S3 access without static keys"},
@@ -766,9 +906,9 @@ support_rows = [
     {"Capability": "Policy Enforcement on Iceberg",       "Status": "GA",      "Default path": "RAP + masking evaluated by Horizon",        "Best for": "Row/column-level security for Spark"},
     {"Capability": "Supported External Engines",          "Status": "GA",      "Default path": "Spark, Flink, Trino, DuckDB, Dremio…",      "Best for": "Open lakehouse ecosystem"},
     {"Capability": "Snowflake Storage for Iceberg",       "Status": "Preview", "Default path": "STORAGE_SERIALIZATION_POLICY=COMPATIBLE",  "Best for": "No external volume setup needed"},
-    {"Capability": "AWS Glue + Catalog-Linked DBs",       "Status": "GA",      "Default path": "CATALOG_SOURCE=ICEBERG_REST + LINKED_CATALOG", "Best for": "Enterprise AWS Glue integration"},
+    {"Capability": "Catalog Federation / CLD",             "Status": "GA",      "Default path": "Glue, Unity, Polaris, OneLake via CLD",        "Best for": "Querying external Iceberg catalogs from Snowflake"},
     {"Capability": "Iceberg Time Travel",                 "Status": "GA",      "Default path": "AT(SNAPSHOT=>) / AT(TIMESTAMP=>)",         "Best for": "Data recovery and historical analysis"},
-    {"Capability": "Table Maintenance (OPTIMIZE/REORG)",  "Status": "GA",      "Default path": "ALTER ICEBERG TABLE ... OPTIMIZE",         "Best for": "Post-Spark compaction, performance"},
+    {"Capability": "Automated Table Maintenance",           "Status": "GA",      "Default path": "Auto for Snowflake writes; OPTIMIZE for Spark", "Best for": "Keeping Iceberg tables healthy after mixed writes"},
     {"Capability": "Schema Evolution",                    "Status": "GA",      "Default path": "ALTER TABLE ADD/DROP/RENAME COLUMN",       "Best for": "Evolving schemas without data rewrite"},
     {"Capability": "Competitive Positioning",             "Status": "GA",      "Default path": "Databricks/AWS/GCP/Microsoft comparison",  "Best for": "Customer conversation prep"},
     {"Capability": "Snowpipe Streaming → Iceberg",        "Status": "GA",      "Default path": "Kafka Connector SNOWPIPE_STREAMING mode",  "Best for": "Real-time open Iceberg pipelines"},
@@ -781,6 +921,10 @@ support_rows = [
     {"Capability": "Unity Catalog ↔ Horizon",             "Status": "GA",      "Default path": "Iceberg REST both directions",             "Best for": "Databricks + Snowflake customers"},
     {"Capability": "PrivateLink for Catalog Integrations", "Status": "GA",      "Default path": "Private DNS + Network Policy",             "Best for": "HIPAA/PCI/FedRAMP environments"},
     {"Capability": "Iceberg v3 Features",                  "Status": "GA",      "Default path": "VARIANT, TIMESTAMP_NTZ(9), DEFAULT",       "Best for": "Event/telemetry tables, JSON payloads"},
+    {"Capability": "WIF / OIDC Authentication",              "Status": "GA",      "Default path": "EXTERNAL_OAUTH security integration",       "Best for": "Cloud-native auth — no static tokens"},
+    {"Capability": "Supported External Catalogs",            "Status": "GA",      "Default path": "Glue/Unity/Polaris/OneLake REST",           "Best for": "Catalog Federation reference guide"},
+    {"Capability": "OneLake REST Catalog",                   "Status": "GA",      "Default path": "CATALOG_SOURCE=ICEBERG_REST + Azure OAuth",  "Best for": "Snowflake ↔ Microsoft Fabric/OneLake"},
+    {"Capability": "Auto Table Discovery",                   "Status": "GA",      "Default path": "LINKED_CATALOG + ALTER DATABASE REFRESH",   "Best for": "Zero-registration catalog sync"},
 ]
 
 engine_rows = [
