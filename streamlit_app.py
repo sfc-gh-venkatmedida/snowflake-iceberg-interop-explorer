@@ -893,38 +893,141 @@ Behavior:
             "⚠️ CLDs do not support Snowflake Data Sharing listings — those are separate paths",
         ],
     },
+    {
+        "id":     "29_bidirectional_write",
+        "title":  "29. Bidirectional Write / Concurrent Write Pattern",
+        "status": "GA",
+        "icon":   "🔄",
+        "summary": (
+            "Both Snowflake AND external engines (Spark, Flink) write to the same Snowflake-managed "
+            "Iceberg table concurrently via Horizon REST. Snowflake handles merge/upsert; "
+            "Spark handles high-throughput appends. Both read the latest committed state immediately."
+        ),
+        "arch": """
+Multi-writer architecture:
+  Spark/Flink  → Horizon REST (append)  → Iceberg table
+  Snowflake    → MERGE / INSERT         → same Iceberg table
+  Both readers see latest committed snapshot via OCC
+
+Concurrency model: Optimistic Concurrency Control (OCC) on Iceberg metadata
+  Conflict → one writer retries (automatic)
+  Best practice: partition by time window OR separate ingestion tables + single-writer merge
+""",
+        "files": {
+            "SQL — Bidirectional write setup + merge + verify": ("29_bidirectional_write/01_bidirectional_write_pattern.sql", "sql"),
+        },
+        "key_facts": [
+            "Snowflake uses OCC on Iceberg metadata — concurrent writes auto-retry on conflict",
+            "Best practice: Spark appends raw events, Snowflake handles merge/dedup",
+            "OPTIMIZE after Spark appends to compact small files",
+            "This is distinct from simple Read+Write — it is a multi-writer production architecture",
+        ],
+    },
+    {
+        "id":     "30_auto_refresh_metadata_sync",
+        "title":  "30. Auto-Refresh / Metadata Sync for Externally Managed Iceberg",
+        "status": "GA",
+        "icon":   "🔃",
+        "summary": (
+            "When Spark/Flink writes new snapshots to an externally managed Iceberg table, "
+            "Snowflake must refresh its metadata to see the new data. "
+            "AUTO_REFRESH=TRUE polls automatically (default 30s). "
+            "Distinct from CLD auto-discovery — this is table-level metadata sync for known tables."
+        ),
+        "arch": """
+Spark writes snapshot → external catalog (Glue) → Snowflake polls → new data visible
+
+AUTO_REFRESH = TRUE  → Snowflake polls catalog on interval (30s default, serverless cost)
+Manual REFRESH       → ALTER ICEBERG TABLE ... REFRESH (immediate, on-demand)
+Task-triggered       → CREATE TASK ... AS ALTER ICEBERG TABLE ... REFRESH (post-job pattern)
+
+vs CLD auto-discovery (Feature 28):
+  CLD           = database-level (new TABLES appear automatically)
+  Auto-refresh  = table-level  (new DATA in a known table becomes visible)
+""",
+        "files": {
+            "SQL — Auto-refresh setup + monitoring + Task pattern": ("30_auto_refresh_metadata_sync/01_auto_refresh_externally_managed.sql", "sql"),
+        },
+        "key_facts": [
+            "ALTER ICEBERG TABLE ... SET AUTO_REFRESH = TRUE — no warehouse cost, serverless polling",
+            "Default poll interval: 30s — configure REFRESH_INTERVAL_SECONDS on catalog integration",
+            "Manual ALTER ... REFRESH for immediate sync after Spark jobs",
+            "⚠️ Different from CLD auto-discovery: this is DATA sync, not TABLE discovery",
+        ],
+    },
+    {
+        "id":     "31_bcdr_failsafe",
+        "title":  "31. BCDR / Fail-Safe / Replication for Snowflake-managed Iceberg",
+        "status": "GA",
+        "icon":   "🛡️",
+        "summary": (
+            "Snowflake-managed Iceberg tables get enterprise BCDR automatically: "
+            "7-day Fail-safe (non-configurable, ops recovery), "
+            "0–90 day Time Travel, and cross-region/cross-cloud Replication. "
+            "Key differentiator vs self-managed Iceberg — no equivalent in plain S3/Glue."
+        ),
+        "arch": """
+Snowflake-managed Iceberg:
+  Fail-safe   7 days   automatic, Snowflake Support only, non-configurable
+  Time Travel 0-90 days  ALTER ICEBERG TABLE ... SET DATA_RETENTION_TIME_IN_DAYS = N
+  Replication  cross-region/cloud  CREATE REPLICATION GROUP ... OBJECT_TYPES = DATABASES
+  Zero-copy clone  CREATE ICEBERG TABLE t CLONE source AT (TIMESTAMP => ...)
+
+Self-managed Iceberg (Spark + S3 only):
+  ❌ No fail-safe  ❌ No built-in replication  ⚠️ Snapshot retention = manual
+""",
+        "files": {
+            "SQL — Fail-safe, Time Travel, Replication, zero-copy clone": ("31_bcdr_failsafe/01_bcdr_failsafe_replication.sql", "sql"),
+        },
+        "key_facts": [
+            "Fail-safe: automatic 7-day protection — no config needed, no SQL access (Snowflake Support only)",
+            "Time Travel: 0–90 days on Snowflake-managed Iceberg — CREATE ICEBERG TABLE CLONE for point-in-time recovery",
+            "Replication: CREATE REPLICATION GROUP covers Iceberg tables cross-region/cloud",
+            "Key differentiator: self-managed Iceberg (Spark/Glue) has none of these built-in",
+        ],
+    },
 ]
 
 support_rows = [
-    {"Capability": "Open Iceberg REST Access",             "Status": "GA",      "Default path": "Horizon REST endpoint",                     "Best for": "Any engine supporting Iceberg REST"},
-    {"Capability": "Horizon Catalog (Polaris-based)",       "Status": "GA",      "Default path": "Horizon IS the Polaris implementation",      "Best for": "Open interop story — say 'Horizon' not 'Polaris'"},
-    {"Capability": "Single Endpoint",                       "Status": "GA",      "Default path": "One URI per account",                        "Best for": "Simplifying engine config"},
-    {"Capability": "External Engine Read + Write",        "Status": "GA",      "Default path": "Horizon REST + vended credentials",        "Best for": "Open data engineering pipelines"},
-    {"Capability": "Existing Security Model",             "Status": "GA",      "Default path": "Snowflake users + roles + key-pair JWT",   "Best for": "Unified governance"},
-    {"Capability": "Credential Vending",                  "Status": "GA",      "Default path": "X-Iceberg-Access-Delegation header",       "Best for": "Secure S3 access without static keys"},
-    {"Capability": "Governed Multi-Engine Access",        "Status": "GA",      "Default path": "Snowflake RBAC enforced at REST layer",     "Best for": "Compliance across engines"},
-    {"Capability": "Policy Enforcement on Iceberg",       "Status": "GA",      "Default path": "RAP + masking evaluated by Horizon",        "Best for": "Row/column-level security for Spark"},
-    {"Capability": "Supported External Engines",          "Status": "GA",      "Default path": "Spark, Flink, Trino, DuckDB, Dremio…",      "Best for": "Open lakehouse ecosystem"},
-    {"Capability": "Snowflake Storage for Iceberg",       "Status": "Preview", "Default path": "STORAGE_SERIALIZATION_POLICY=COMPATIBLE",  "Best for": "No external volume setup needed"},
-    {"Capability": "Catalog Federation / CLD",             "Status": "GA",      "Default path": "Glue, Unity, Polaris, OneLake via CLD",        "Best for": "Querying external Iceberg catalogs from Snowflake"},
-    {"Capability": "Iceberg Time Travel",                 "Status": "GA",      "Default path": "AT(SNAPSHOT=>) / AT(TIMESTAMP=>)",         "Best for": "Data recovery and historical analysis"},
-    {"Capability": "Automated Table Maintenance",           "Status": "GA",      "Default path": "Auto for Snowflake writes; OPTIMIZE for Spark", "Best for": "Keeping Iceberg tables healthy after mixed writes"},
-    {"Capability": "Schema Evolution",                    "Status": "GA",      "Default path": "ALTER TABLE ADD/DROP/RENAME COLUMN",       "Best for": "Evolving schemas without data rewrite"},
-    {"Capability": "Competitive Positioning",             "Status": "GA",      "Default path": "Databricks/AWS/GCP/Microsoft comparison",  "Best for": "Customer conversation prep"},
-    {"Capability": "Snowpipe Streaming → Iceberg",        "Status": "GA",      "Default path": "Kafka Connector SNOWPIPE_STREAMING mode",  "Best for": "Real-time open Iceberg pipelines"},
-    {"Capability": "Dynamic Tables as Iceberg",           "Status": "GA",      "Default path": "CREATE DYNAMIC ICEBERG TABLE",             "Best for": "Incremental pipelines with open output"},
-    {"Capability": "Partitioning + Performance Tuning",   "Status": "GA",      "Default path": "PARTITION BY transforms + OPTIMIZE",       "Best for": "Query performance, partition pruning"},
-    {"Capability": "Secure Data Sharing for Iceberg",      "Status": "GA",      "Default path": "CREATE SHARE + multi-tenant RAP",          "Best for": "Cross-account & multi-tenant Iceberg"},
-
-    {"Capability": "Snowpark on Iceberg",                  "Status": "GA",      "Default path": "session.table() + write.save_as_table()",  "Best for": "Python-native Iceberg access in Snowflake"},
-    {"Capability": "Object Tags + Data Classification",    "Status": "GA",      "Default path": "CREATE TAG + SYSTEM$CLASSIFY()",           "Best for": "PII governance on Iceberg tables"},
-    {"Capability": "Unity Catalog ↔ Horizon",             "Status": "GA",      "Default path": "Iceberg REST both directions",             "Best for": "Databricks + Snowflake customers"},
-    {"Capability": "PrivateLink for Catalog Integrations", "Status": "GA",      "Default path": "Private DNS + Network Policy",             "Best for": "HIPAA/PCI/FedRAMP environments"},
-    {"Capability": "Iceberg v3 Features",                  "Status": "GA",      "Default path": "VARIANT, TIMESTAMP_NTZ(9), DEFAULT",       "Best for": "Event/telemetry tables, JSON payloads"},
-    {"Capability": "WIF / OIDC Authentication",              "Status": "GA",      "Default path": "EXTERNAL_OAUTH security integration",       "Best for": "Cloud-native auth — no static tokens"},
-    {"Capability": "Supported External Catalogs",            "Status": "GA",      "Default path": "Glue/Unity/Polaris/OneLake REST",           "Best for": "Catalog Federation reference guide"},
-    {"Capability": "OneLake REST Catalog",                   "Status": "GA",      "Default path": "CATALOG_SOURCE=ICEBERG_REST + Azure OAuth",  "Best for": "Snowflake ↔ Microsoft Fabric/OneLake"},
-    {"Capability": "Auto Table Discovery",                   "Status": "GA",      "Default path": "LINKED_CATALOG + ALTER DATABASE REFRESH",   "Best for": "Zero-registration catalog sync"},
+    # ── PILLAR 1: Interop Foundations ──────────────────────────────────────
+    {"Pillar": "🏗️ Interop Foundations",   "Capability": "Open Iceberg REST Access",          "Status": "GA", "Default path": "Horizon REST endpoint",                    "Best for": "Any engine supporting Iceberg REST"},
+    {"Pillar": "🏗️ Interop Foundations",   "Capability": "Horizon Catalog (Polaris-based)",   "Status": "GA", "Default path": "Horizon IS the Polaris implementation",   "Best for": "Open interop — say 'Horizon' not 'Polaris'"},
+    {"Pillar": "🏗️ Interop Foundations",   "Capability": "Single Endpoint",                   "Status": "GA", "Default path": "One URI per account",                     "Best for": "Simplifying engine config"},
+    # ── PILLAR 2: Access Patterns ──────────────────────────────────────────
+    {"Pillar": "⚡ Access Patterns",        "Capability": "External Engine Read via Horizon",  "Status": "GA", "Default path": "Horizon REST + Iceberg catalog config",   "Best for": "Open lakehouse reads from any engine"},
+    {"Pillar": "⚡ Access Patterns",        "Capability": "External Engine Write via Horizon", "Status": "GA", "Default path": "Horizon REST write + credential vending", "Best for": "Open lakehouse writes (Spark, Flink)"},
+    {"Pillar": "⚡ Access Patterns",        "Capability": "Bidirectional Write Pattern",       "Status": "GA", "Default path": "OCC on Iceberg metadata",                 "Best for": "Spark appends + Snowflake merge on same table"},
+    {"Pillar": "⚡ Access Patterns",        "Capability": "Supported External Engines",        "Status": "GA", "Default path": "Spark/Flink/Trino/DuckDB/Dremio/Doris…", "Best for": "Open lakehouse ecosystem"},
+    # ── PILLAR 3: Catalog Federation ───────────────────────────────────────
+    {"Pillar": "🔌 Catalog Federation",     "Capability": "Catalog Federation / CLD",          "Status": "GA", "Default path": "CREATE DATABASE LINKED_CATALOG",          "Best for": "Federate to Glue/Unity/Polaris/OneLake"},
+    {"Pillar": "🔌 Catalog Federation",     "Capability": "Supported External Catalogs",       "Status": "GA", "Default path": "Glue/Unity/Polaris/OneLake REST",         "Best for": "Catalog federation reference guide"},
+    {"Pillar": "🔌 Catalog Federation",     "Capability": "OneLake REST Catalog",              "Status": "GA", "Default path": "CATALOG_SOURCE=ICEBERG_REST + Azure OAuth","Best for": "Snowflake ↔ Microsoft Fabric/OneLake"},
+    {"Pillar": "🔌 Catalog Federation",     "Capability": "Auto Table Discovery",              "Status": "GA", "Default path": "LINKED_CATALOG + ALTER DATABASE REFRESH", "Best for": "Zero-registration catalog sync"},
+    {"Pillar": "🔌 Catalog Federation",     "Capability": "Auto-Refresh / Metadata Sync",      "Status": "GA", "Default path": "AUTO_REFRESH=TRUE on externally managed", "Best for": "New Spark snapshots visible in Snowflake"},
+    # ── PILLAR 4: Governance & Security ───────────────────────────────────
+    {"Pillar": "🔐 Governance & Security",  "Capability": "Snowflake Security Model",          "Status": "GA", "Default path": "Snowflake users + roles + key-pair JWT",  "Best for": "Unified governance across all engines"},
+    {"Pillar": "🔐 Governance & Security",  "Capability": "Credential Vending",                "Status": "GA", "Default path": "X-Iceberg-Access-Delegation header",      "Best for": "Secure S3 access without static keys"},
+    {"Pillar": "🔐 Governance & Security",  "Capability": "WIF / OIDC Authentication",         "Status": "GA", "Default path": "EXTERNAL_OAUTH security integration",     "Best for": "Cloud-native auth — no static tokens"},
+    {"Pillar": "🔐 Governance & Security",  "Capability": "Policy Enforcement on Iceberg",     "Status": "GA", "Default path": "RAP + masking evaluated by Horizon",      "Best for": "Row/column-level security for Spark"},
+    {"Pillar": "🔐 Governance & Security",  "Capability": "Object Tags + Data Classification", "Status": "GA", "Default path": "CREATE TAG + SYSTEM$CLASSIFY()",          "Best for": "PII governance on Iceberg tables"},
+    # ── PILLAR 5: Data Operations ──────────────────────────────────────────
+    {"Pillar": "🗄️ Data Operations",        "Capability": "Snowflake Storage for Iceberg",     "Status": "GA", "Default path": "STORAGE_SERIALIZATION_POLICY=COMPATIBLE", "Best for": "No external volume setup needed"},
+    {"Pillar": "🗄️ Data Operations",        "Capability": "Iceberg Time Travel",               "Status": "GA", "Default path": "AT(SNAPSHOT=>) / AT(TIMESTAMP=>)",        "Best for": "Data recovery and historical analysis"},
+    {"Pillar": "🗄️ Data Operations",        "Capability": "Automated Table Maintenance",       "Status": "GA", "Default path": "Auto for Snowflake; OPTIMIZE for Spark",  "Best for": "Table health after mixed engine writes"},
+    {"Pillar": "🗄️ Data Operations",        "Capability": "Schema Evolution",                  "Status": "GA", "Default path": "ALTER TABLE ADD/DROP/RENAME COLUMN",      "Best for": "Evolving schemas without data rewrite"},
+    {"Pillar": "🗄️ Data Operations",        "Capability": "Partitioning (Iceberg-native)",     "Status": "GA", "Default path": "PARTITION BY transforms",                 "Best for": "Multi-engine partition pruning"},
+    {"Pillar": "🗄️ Data Operations",        "Capability": "Iceberg v3 Features",               "Status": "GA", "Default path": "VARIANT, TIMESTAMP_NTZ(9), DEFAULT",      "Best for": "Event/telemetry tables, JSON payloads"},
+    # ── PILLAR 6: Ingest & Transform ──────────────────────────────────────
+    {"Pillar": "🔁 Ingest & Transform",     "Capability": "Snowpipe Streaming → Iceberg",      "Status": "GA", "Default path": "Kafka Connector SNOWPIPE_STREAMING mode", "Best for": "Real-time open Iceberg pipelines"},
+    {"Pillar": "🔁 Ingest & Transform",     "Capability": "Dynamic Tables as Iceberg",         "Status": "GA", "Default path": "CREATE DYNAMIC ICEBERG TABLE",            "Best for": "Incremental pipelines with open output"},
+    {"Pillar": "🔁 Ingest & Transform",     "Capability": "Snowpark on Iceberg",               "Status": "GA", "Default path": "session.table() + write.save_as_table()", "Best for": "Python-native Iceberg access in Snowflake"},
+    # ── PILLAR 7: Distribution & Enterprise ───────────────────────────────
+    {"Pillar": "🌐 Distribution & Enterprise", "Capability": "Secure Data Sharing for Iceberg","Status": "GA", "Default path": "CREATE SHARE + multi-tenant RAP",         "Best for": "Cross-account & multi-tenant Iceberg"},
+    {"Pillar": "🌐 Distribution & Enterprise", "Capability": "Unity Catalog ↔ Horizon",        "Status": "GA", "Default path": "Iceberg REST both directions",            "Best for": "Databricks + Snowflake customers"},
+    {"Pillar": "🌐 Distribution & Enterprise", "Capability": "PrivateLink for Catalog Integrations","Status": "GA","Default path": "Private DNS + Network Policy",        "Best for": "HIPAA/PCI/FedRAMP environments"},
+    {"Pillar": "🌐 Distribution & Enterprise", "Capability": "BCDR / Fail-Safe / Replication", "Status": "GA", "Default path": "Fail-safe 7d + Time Travel + Replication","Best for": "Enterprise-grade Iceberg data protection"},
+    # ── APPENDIX ──────────────────────────────────────────────────────────
+    {"Pillar": "📎 Appendix",               "Capability": "Competitive Positioning",            "Status": "GA", "Default path": "Databricks/AWS/GCP/Microsoft comparison", "Best for": "Seller talk track — not customer-facing"},
 ]
 
 engine_rows = [
@@ -1025,7 +1128,12 @@ with engines_tab:
 with matrix_tab:
     st.title("Full Capability Matrix")
     df = pd.DataFrame(support_rows)
-    st.dataframe(df.reset_index(drop=True), use_container_width=True)
+    st.markdown("### 7-Pillar Structure (Glean-recommended)")
+    pillars = df["Pillar"].unique()
+    for pillar in pillars:
+        st.markdown(f"**{pillar}**")
+        sub = df[df["Pillar"] == pillar][["Capability", "Status", "Default path", "Best for"]].reset_index(drop=True)
+        st.dataframe(sub, use_container_width=True)
 
     st.subheader("Demo configuration reference")
     st.code(f"""
